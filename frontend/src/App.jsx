@@ -3,7 +3,7 @@ import { Play, Sparkles, Film, ArrowRight, RefreshCw, Layers } from 'lucide-reac
 import VideoCard from './components/VideoCard';
 import ChatPanel from './components/ChatPanel';
 
-const API_BASE_URL = 'http://127.0.0.1:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 export default function App() {
   // Video Inputs - prefilled with real looking test URLs for instant testing

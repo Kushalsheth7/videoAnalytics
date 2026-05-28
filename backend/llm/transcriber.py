@@ -25,6 +25,12 @@ def download_and_transcribe_audio(url: str, video_id: str) -> str:
         }],
         'quiet': True,
         'no_warnings': True,
+        'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android_creator']
+            }
+        }
     }
 
     logger.info(f"Downloading audio from {url} for transcription...")

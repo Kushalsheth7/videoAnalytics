@@ -1,5 +1,6 @@
 import os
 import re
+import requests
 import logging
 from typing import Dict, Any, Optional
 import yt_dlp
@@ -83,13 +84,17 @@ def scrape_video_data(url: str) -> Dict[str, Any]:
     if not video_id:
         raise ValueError(f"Could not extract video ID from URL: {url}")
 
-    # Configure yt-dlp
+    # Configure yt-dlp with mobile client spoofing to bypass Render IP blocks
     ydl_opts = {
         'skip_download': True,
         'quiet': True,
         'no_warnings': True,
-        # Use user-agent to bypass basic Instagram blocks
-        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android_creator']
+            }
+        }
     }
     
     try:
@@ -97,10 +102,30 @@ def scrape_video_data(url: str) -> Dict[str, Any]:
             info = ydl.extract_info(url, download=False)
     except Exception as e:
         logger.warning(f"yt-dlp failed (likely bot-blocked by YouTube/Instagram): {e}")
-        logger.info("Falling back to estimated dummy metadata...")
         info = {}
+        
+        # Second fallback: Fetch REAL data from an open-source Invidious instance!
+        if is_youtube and video_id:
+            logger.info("Attempting Invidious API fallback for real metadata...")
+            try:
+                res = requests.get(f"https://vid.puffyan.us/api/v1/videos/{video_id}", timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    info = {
+                        "title": data.get("title", ""),
+                        "uploader": data.get("author", ""),
+                        "channel_follower_count": data.get("subCount", 0),
+                        "view_count": data.get("viewCount", 0),
+                        "like_count": data.get("likeCount", 0),
+                        "comment_count": 0,
+                        "duration": data.get("lengthSeconds", 0)
+                    }
+                    logger.info("Invidious API metadata fetch successful!")
+            except Exception as api_err:
+                logger.warning(f"Invidious API fallback failed: {api_err}")
 
     if not info and not isinstance(info, dict):
+        logger.info("Falling back to estimated dummy metadata...")
         info = {}
 
     # Process and build scraped data map

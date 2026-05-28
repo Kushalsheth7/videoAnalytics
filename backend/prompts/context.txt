@@ -1,0 +1,5 @@
+Relevant transcript chunks retrieved from the vector database for your reference:
+
+{context_text}
+
+User Query: {query}

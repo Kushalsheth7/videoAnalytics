@@ -5,8 +5,7 @@ import threading
 from typing import List
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-# from langchain_huggingface import HuggingFaceEmbeddings
-from langchain_google_genai import GoogleGenerativeAIEmbeddings
+from langchain_community.embeddings.fastembed import FastEmbedEmbeddings
 from langchain_core.documents import Document
 from config import settings
 
@@ -24,21 +23,11 @@ _vector_store_instance = None
 _vector_store_lock = threading.Lock()
 
 def get_embedding_function():
-    """Initializes and returns the embeddings function. 
-    Swapped to Gemini Free API because local PyTorch model OOMs on Render's 512MB free tier."""
-    
-    # --- ORIGINAL LOCAL IMPLEMENTATION (Commented out for deployment) ---
-    # logger.info(f"Loading local HuggingFace Embeddings: {settings.EMBEDDING_MODEL}...")
-    # return HuggingFaceEmbeddings(model_name=settings.EMBEDDING_MODEL)
-    
-    # --- RENDER DEPLOYMENT IMPLEMENTATION (Free Network API) ---
-    logger.info("Loading Google Gemini Embeddings API (Network-based to save RAM)...")
-    if not settings.GEMINI_API_KEY:
-        raise ValueError("GEMINI_API_KEY is missing from environment variables!")
-    return GoogleGenerativeAIEmbeddings(
-        model="models/embedding-001", 
-        google_api_key=settings.GEMINI_API_KEY
-    )
+    """Initializes and returns the FastEmbed function. 
+    FastEmbed runs locally via ONNX without PyTorch, using <100MB RAM.
+    Perfect for Render's 512MB free tier."""
+    logger.info("Loading FastEmbed Embeddings (Local ONNX to save RAM)...")
+    return FastEmbedEmbeddings(model_name="BAAI/bge-small-en-v1.5")
 
 def get_vector_store(force_recreate: bool = False) -> Chroma:
     """Gets or initializes the persistent Chroma vector store."""

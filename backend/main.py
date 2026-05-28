@@ -1,6 +1,6 @@
 import logging
 from typing import List, Dict, Any, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -26,7 +26,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # In production, restrict this to the frontend domain
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -55,9 +55,15 @@ class UpdateVideoRequest(BaseModel):
 # === ROUTES ===
 
 @app.get("/api/health")
-def health_check():
-    """Simple API status health check."""
-    return {"status": "ok", "message": "Creatorjoy RAG API is fully functional."}
+def health_check(background_tasks: BackgroundTasks):
+    """Simple health check endpoint that also pre-warms the local embedding model."""
+    from services.vector_store import get_vector_store
+    
+    # Pre-warm the embedding model in the background if it's not loaded yet.
+    # Because the React app polls this immediately, this completely hides the cold-start download time!
+    background_tasks.add_task(get_vector_store)
+    
+    return {"status": "ok", "message": "Creatorjoy Backend is running."}
 
 @app.post("/api/process-videos")
 def process_videos(request: ProcessRequest):

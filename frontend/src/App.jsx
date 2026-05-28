@@ -7,8 +7,8 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:8000';
 
 export default function App() {
   // Video Inputs - prefilled with real looking test URLs for instant testing
-  const [videoAUrl, setVideoAUrl] = useState('https://youtube.com/shorts/3ua57RMmv7Y?si=TU4gNjo9M1X6egtn');
-  const [videoBUrl, setVideoBUrl] = useState('https://www.instagram.com/reel/DYmq00Dv9KQ/?utm_source=ig_web_copy_link&igsh=MzRlODBiNWFlZA==');
+  const [videoAUrl, setVideoAUrl] = useState(() => localStorage.getItem('creatorjoy_videoAUrl') || 'https://youtube.com/shorts/3ua57RMmv7Y?si=TU4gNjo9M1X6egtn');
+  const [videoBUrl, setVideoBUrl] = useState(() => localStorage.getItem('creatorjoy_videoBUrl') || 'https://www.instagram.com/reel/DYmq00Dv9KQ/?utm_source=ig_web_copy_link&igsh=MzRlODBiNWFlZA==');
   
   // Loading & Ingestion States
   const [isLoading, setIsLoading] = useState(false);
@@ -16,11 +16,29 @@ export default function App() {
   const [apiStatus, setApiStatus] = useState('connecting');
   
   // Scraped Video Data
-  const [videoData, setVideoData] = useState(null);
+  const [videoData, setVideoData] = useState(() => {
+    const saved = localStorage.getItem('creatorjoy_videoData');
+    return saved ? JSON.parse(saved) : null;
+  });
   
   // Chat RAG state
-  const [chatHistory, setChatHistory] = useState([]);
+  const [chatHistory, setChatHistory] = useState(() => {
+    const saved = localStorage.getItem('creatorjoy_chatHistory');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [isStreaming, setIsStreaming] = useState(false);
+
+  // Sync state to localStorage
+  useEffect(() => { localStorage.setItem('creatorjoy_videoAUrl', videoAUrl); }, [videoAUrl]);
+  useEffect(() => { localStorage.setItem('creatorjoy_videoBUrl', videoBUrl); }, [videoBUrl]);
+  useEffect(() => {
+    if (videoData) localStorage.setItem('creatorjoy_videoData', JSON.stringify(videoData));
+    else localStorage.removeItem('creatorjoy_videoData');
+  }, [videoData]);
+  useEffect(() => {
+    if (chatHistory.length > 0) localStorage.setItem('creatorjoy_chatHistory', JSON.stringify(chatHistory));
+    else localStorage.removeItem('creatorjoy_chatHistory');
+  }, [chatHistory]);
 
   // Check API health status on mount
   useEffect(() => {

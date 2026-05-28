@@ -11,3 +11,4 @@ chromadb
 yt-dlp
 youtube-transcript-api
 sentence-transformers
+langchain-huggingface

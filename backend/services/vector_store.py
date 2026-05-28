@@ -1,6 +1,7 @@
 import os
 import shutil
 import logging
+import threading
 from typing import List
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
@@ -12,6 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Fallback in-memory DB in case persist fails or to keep things simple
 _vector_store_instance = None
+_vector_store_lock = threading.Lock()
 
 def get_embedding_function():
     """Initializes and returns the local HuggingFace Embeddings function."""
@@ -24,23 +26,24 @@ def get_vector_store(force_recreate: bool = False) -> Chroma:
     
     persist_dir = settings.CHROMA_PERSIST_DIRECTORY
     
-    if force_recreate:
-        reset_vector_store()
-        _vector_store_instance = None
+    with _vector_store_lock:
+        if force_recreate:
+            reset_vector_store()
+            _vector_store_instance = None
 
-    if _vector_store_instance is None:
-        embeddings = get_embedding_function()
-        
-        # Ensure persistence directory exists
-        os.makedirs(persist_dir, exist_ok=True)
-        
-        logger.info(f"Initializing ChromaDB persisted at: {persist_dir}")
-        _vector_store_instance = Chroma(
-            collection_name="creatorjoy_rag",
-            embedding_function=embeddings,
-            persist_directory=persist_dir
-        )
-        
+        if _vector_store_instance is None:
+            embeddings = get_embedding_function()
+            
+            # Ensure persistence directory exists
+            os.makedirs(persist_dir, exist_ok=True)
+            
+            logger.info(f"Initializing ChromaDB persisted at: {persist_dir}")
+            _vector_store_instance = Chroma(
+                collection_name="creatorjoy_rag",
+                embedding_function=embeddings,
+                persist_directory=persist_dir
+            )
+            
     return _vector_store_instance
 
 def reset_vector_store():

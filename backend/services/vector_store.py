@@ -56,23 +56,19 @@ def get_vector_store(force_recreate: bool = False) -> Chroma:
     return _vector_store_instance
 
 def reset_vector_store():
-    """Deletes the existing Chroma DB files to reset state completely."""
+    """Properly resets the Chroma DB collection using the API to avoid SQLite corruption."""
     global _vector_store_instance
-    persist_dir = settings.CHROMA_PERSIST_DIRECTORY
-    logger.info(f"Resetting Vector Store. Deleting directory {persist_dir}...")
+    logger.info("Resetting Vector Store...")
     
-    # Close instance if any
-    _vector_store_instance = None
-    
-    # Delete directory
-    if os.path.exists(persist_dir):
+    if _vector_store_instance is not None:
         try:
-            # Add a slight delay or retry loop if OS file lock exists
-            shutil.rmtree(persist_dir)
-            logger.info("Successfully deleted vector store persistence directory.")
+            _vector_store_instance.delete_collection()
+            logger.info("Successfully deleted vector store collection.")
         except Exception as e:
-            logger.warning(f"Could not delete persistence directory: {e}. Clearing collection instead.")
-            # Fallback: if we can't delete directory due to process locks, we will clear collection later
+            logger.warning(f"Could not delete collection (may not exist yet): {e}")
+            
+    # Reset our global instance so it re-initializes fresh next time
+    _vector_store_instance = None
 
 def add_video_transcript(video_id: str, transcript: str, metadata: dict) -> List[str]:
     """Chunks a video transcript, tags each chunk, and adds it to ChromaDB."""

@@ -107,6 +107,11 @@ creatorjoy/
 - Python 3.10+
 - FFmpeg (Must be installed and on your system PATH for `yt-dlp` audio extraction)
 
+### 0 Github
+```bash
+git clone https://github.com/Kushalsheth7/videAnalytics.git
+```
+
 ### 1. Environment Setup
 Create a `.env` file in the root directory based on the `.env.example`:
 ```env

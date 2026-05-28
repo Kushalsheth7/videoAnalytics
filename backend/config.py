@@ -7,6 +7,7 @@ env_file_path = os.path.join(root_dir, ".env")
 
 class Settings(BaseSettings):
     GROQ_API_KEY: str = ""
+    GEMINI_API_KEY: str = ""
     CHROMA_PERSIST_DIRECTORY: str = "data/chroma"
     LLM_MODEL: str = "llama-3.3-70b-versatile"
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"

@@ -10,5 +10,6 @@ groq
 chromadb
 yt-dlp
 youtube-transcript-api
-sentence-transformers
-langchain-huggingface
+# sentence-transformers
+# langchain-huggingface
+langchain-google-genai

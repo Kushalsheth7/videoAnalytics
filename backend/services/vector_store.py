@@ -5,9 +5,17 @@ import threading
 from typing import List
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain_huggingface import HuggingFaceEmbeddings
+# from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_core.documents import Document
 from config import settings
+
+# Attempt to limit PyTorch RAM usage for Render Free Tier (512MB limit)
+# try:
+#     import torch
+#     torch.set_num_threads(1)
+# except ImportError:
+#     pass
 
 logger = logging.getLogger(__name__)
 
@@ -16,9 +24,21 @@ _vector_store_instance = None
 _vector_store_lock = threading.Lock()
 
 def get_embedding_function():
-    """Initializes and returns the local HuggingFace Embeddings function."""
-    logger.info(f"Loading local HuggingFace Embeddings: {settings.EMBEDDING_MODEL}...")
-    return HuggingFaceEmbeddings(model_name=settings.EMBEDDING_MODEL)
+    """Initializes and returns the embeddings function. 
+    Swapped to Gemini Free API because local PyTorch model OOMs on Render's 512MB free tier."""
+    
+    # --- ORIGINAL LOCAL IMPLEMENTATION (Commented out for deployment) ---
+    # logger.info(f"Loading local HuggingFace Embeddings: {settings.EMBEDDING_MODEL}...")
+    # return HuggingFaceEmbeddings(model_name=settings.EMBEDDING_MODEL)
+    
+    # --- RENDER DEPLOYMENT IMPLEMENTATION (Free Network API) ---
+    logger.info("Loading Google Gemini Embeddings API (Network-based to save RAM)...")
+    if not settings.GEMINI_API_KEY:
+        raise ValueError("GEMINI_API_KEY is missing from environment variables!")
+    return GoogleGenerativeAIEmbeddings(
+        model="models/text-embedding-004", 
+        google_api_key=settings.GEMINI_API_KEY
+    )
 
 def get_vector_store(force_recreate: bool = False) -> Chroma:
     """Gets or initializes the persistent Chroma vector store."""

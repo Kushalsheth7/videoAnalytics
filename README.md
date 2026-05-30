@@ -1,39 +1,70 @@
-# CreatorJoy: Strategic RAG Comparison
+# CreatorJoy: Strategic RAG Video Comparison Chatbot
 
-A fully dynamic, full-stack RAG pipeline designed to ingest, chunk, embed, and compare social media videos (YouTube & Instagram Reels) for engagement and hook analysis.
+A fully dynamic, full-stack RAG pipeline that ingests, transcribes, and compares social media videos (YouTube & Instagram Reels) — then powers a streaming AI chatbot for engagement analysis and hook comparison.
+
+---
 
 ## 🧠 Engineering & Architectural Decisions
 
-When building this pipeline, the goal was to create the **highest-quality, lowest-cost** method capable of scaling, while anticipating the inevitable realities of scraping social media in production.
+### 1. 100% Free AI Stack
+This stack was deliberately built to cost **$0** for the MVP:
+- **LLM**: Llama 3.3 70B via **Groq** — fastest inference available (~500 tokens/sec), perfect for SSE streaming.
+- **Transcription**: Groq **Whisper large-v3** — free, accurate, handles mixed Hindi/English.
+- **Embeddings**: **FastEmbed** (`BAAI/bge-small-en-v1.5`) — runs on ONNX locally, ~100MB RAM, zero PyTorch needed, zero API cost.
+- **Vector DB**: **ChromaDB** (local persistence) — no cloud subscription, zero cost for MVP.
 
-### 1. 100% Free, High-Performance AI Stack
-I intentionally purged all OpenAI dependencies. Relying on GPT-4o for an MVP that scales to 1,000 creators/day is financial suicide. Instead, this stack uses:
-- **LLM**: Llama 3 70B (via Groq) for conversational RAG. It's blazingly fast (essential for SSE streaming) and heavily rate-limited but free for the MVP.
-- **Audio Transcription**: Groq's Whisper API (whisper-large-v3). Same reasoning.
-- **Embeddings**: Local HuggingFace `all-MiniLM-L6-v2`. Rather than paying Cohere or OpenAI per token, I run a lightweight, highly capable embedding model locally. It's fast, free, and perfectly tuned for semantic similarity in conversational transcripts.
+### 2. Instagram Scraping Strategy
+Instagram aggressively blocks headless scrapers. The pipeline handles this with a two-layer approach:
 
-### 2. Instagram Scraping: The "Graceful Failover"
-Social platforms (especially Instagram) aggressively block headless scrapers (like `yt-dlp`). If you try to blindly pull metadata in production, your pipeline *will* crash eventually. 
+**Layer 1 — `instaloader`** (metadata enrichment): Uses Instagram's mobile GraphQL API to reliably fetch:
+- Views (`video_view_count`)
+- Likes, comments
+- Creator follower count
+- Caption (used as title)
 
-To solve this, I engineered a graceful fallback: if Instagram blocks the view/follower count, the system mathematically estimates them based on the `likes` ratio, and flags them as `(est.)` in the UI. The formulas are:
-- **Views**: `max(12500, Likes × 15)`
-- **Followers**: `max(4500, Likes × 8)`
+**Layer 2 — `yt-dlp`** (audio extraction): Pulls the video stream for Whisper transcription. Works without authentication for most public Reels.
 
-Furthermore, the UI allows the creator to **manually edit and override** the metadata, instantly re-indexing the ChromaDB chunks on the fly. *The pipeline must never crash.*
+If both fail (private post), the UI renders an **edit drawer** so the user can paste real metrics and transcripts manually — ChromaDB re-indexes instantly on save. The pipeline never crashes.
 
-### 3. Vector DB: Why Chroma?
-For the MVP, I used **ChromaDB** with local persistence. Why? Because provisioning a Pinecone cluster for a local demo adds unnecessary latency and setup overhead. Chroma runs perfectly in-memory and saves to disk. 
-**What breaks at 10,000 users?** Local SQLite-backed Chroma will face concurrent write-lock issues. At scale, I would instantly swap this out for **pgvector** (Postgres) because it allows us to store user relational data and vector data in the exact same transactional database, eliminating syncing bugs.
+### 3. YouTube Scraping Strategy
+- **Primary**: `youtube-transcript-api` — grabs auto-captions in milliseconds at zero cost.
+- **Fallback 1**: `yt-dlp` with `tv_embedded`/`android_vr` clients + `ignore_no_formats_error=True` — bypasses the new PO Token requirement and returns metadata even when formats are blocked.
+- **Fallback 2**: Open-source **Invidious API** (`vid.puffyan.us`) — returns real title, views, likes, duration when yt-dlp is blocked by IP.
 
 ### 4. Chunking Strategy
-I used LangChain's `RecursiveCharacterTextSplitter` with `chunk_size=500` and `chunk_overlap=50`. 
-Why 500? YouTube and Reels transcripts are conversational, messy, and lack formal paragraph structure. A 1,000-character chunk dilutes the semantic meaning of a "hook". 500 characters tightly isolates a 10-15 second burst of dialogue, meaning when the LLM searches for the "first 5 seconds", it gets exactly the context it needs without hallucinating over irrelevant filler words.
+`RecursiveCharacterTextSplitter` with `chunk_size=500`, `chunk_overlap=50`.
 
-### 5. Frontend: React (Vite) over Next.js
-I chose React with Vite instead of Next.js. Why? Because this application is fundamentally a real-time, event-driven dashboard. We are streaming Server-Sent Events (SSE) from the backend directly to the chat panel. Server-Side Rendering (SSR) adds zero SEO benefit to a gated creator dashboard and only adds deployment overhead. Vite is faster to build and runs lighter in the browser.
+Why 500 chars? YouTube/Reels transcripts are conversational. A 500-char chunk isolates roughly 10–15 seconds of dialogue, meaning when the LLM searches for "the first 5 seconds", it retrieves exactly that snippet without irrelevant filler.
 
-### 6. Prompt Decoupling
-All LLM prompts live in external `.txt` files under `backend/prompts/`, not buried inside Python code. This means a non-engineer (a prompt designer, a content strategist) can iterate on the AI's personality and instructions without touching a single line of code or restarting the server. In production, this would plug directly into an A/B testing framework.
+### 5. Prompt Decoupling
+All LLM prompts live in `backend/prompts/*.txt` files — not in Python code. A non-engineer can iterate on the AI's tone and instructions without touching code or restarting the server.
+
+### 6. Frontend Architecture
+React + Vite over Next.js — this is a real-time SSE streaming dashboard. SSR adds zero SEO benefit and only adds deployment overhead for a gated creator tool.
+
+---
+
+## 🛑 Real Problems Faced & Solutions
+
+### Problem 1: YouTube PO Token Requirement (May 2026)
+`yt-dlp` with `ios` and `android_creator` clients started requiring a GVS PO Token — both returned "No video formats found!".
+
+**Fix**: Switched to `tv_embedded` + `android_vr` clients which bypass this requirement, and added `ignore_no_formats_error=True` so metadata is always returned even when formats are blocked.
+
+### Problem 2: Instagram Chrome Cookie Extraction Fails on Windows
+Attempted `yt-dlp --cookiesfrombrowser chrome` but Windows Chrome holds a database lock while running, causing "Could not copy Chrome cookie database" errors.
+
+**Fix**: Dropped the cookie layer entirely. Use `instaloader` directly for all metadata (views, likes, comments, follower count) — it hits Instagram's mobile API without needing cookies for public posts. `yt-dlp` is only used separately for audio download.
+
+### Problem 3: HuggingFace Embeddings + PyTorch = OOM
+`sentence-transformers` requires PyTorch (~1.5GB RAM), which crashes on Render's 512MB free tier.
+
+**Fix**: Replaced with **FastEmbed** (ONNX runtime). Sub-100MB, runs on CPU, fully local, same embedding quality for this task.
+
+### Problem 4: YouTubeTranscriptApi Breaking Change
+Older code called `YouTubeTranscriptApi.get_transcript(video_id)` as a static method — the updated library requires instantiation: `api = YouTubeTranscriptApi(); transcript_list = api.list(video_id)`.
+
+**Fix**: Updated to the new instantiation pattern with language fallback (`en` → any available).
 
 ---
 
@@ -41,35 +72,39 @@ All LLM prompts live in external `.txt` files under `backend/prompts/`, not buri
 
 ```
 creatorjoy/
+├── .env                  # Active environment config (not committed)
 ├── .env.example          # Template for environment variables
 ├── .gitignore
 ├── README.md
 │
 ├── backend/
-│   ├── main.py           # FastAPI app — all API routes live here
-│   ├── config.py         # Pydantic settings loader (reads .env)
+│   ├── main.py           # FastAPI app — all API routes
+│   ├── config.py         # Pydantic settings loader (.env)
 │   ├── requirements.txt
 │   │
 │   ├── llm/              # All LLM-calling logic, isolated
-│   │   ├── core.py       # Central Groq client factory (single source of truth)
-│   │   ├── rag.py        # RAG chain — prompt building, streaming, citations
-│   │   └── transcriber.py # Audio download + Whisper transcription
+│   │   ├── core.py       # Central Groq client factory
+│   │   ├── rag.py        # RAG chain — streaming, citations, memory
+│   │   └── transcriber.py # Audio download + Groq Whisper transcription
 │   │
 │   ├── services/         # Non-LLM business logic
-│   │   ├── scraper.py    # yt-dlp metadata extraction + fallback estimation
-│   │   └── vector_store.py # ChromaDB: chunking, embedding, similarity search
+│   │   ├── scraper.py    # yt-dlp + instaloader + YouTube transcript extraction
+│   │   └── vector_store.py # ChromaDB: chunking, FastEmbed, similarity search
 │   │
-│   └── prompts/          # Decoupled AI instructions (editable without code changes)
-│       ├── system.txt    # Main system prompt with response instructions
+│   └── prompts/          # Decoupled AI instructions
+│       ├── system.txt    # Main system prompt
 │       └── context.txt   # RAG context injection template
 │
 └── frontend/
-    ├── src/
-    │   ├── App.jsx        # Main app — URL inputs, ingestion, chat orchestration
-    │   └── components/
-    │       ├── VideoCard.jsx  # Side-by-side metric cards with edit/override
-    │       └── ChatPanel.jsx  # Streaming RAG chat with citations + presets
-    └── index.css          # Full design system (dark theme, glassmorphism)
+    ├── index.html
+    ├── vite.config.js
+    ├── package.json
+    └── src/
+        ├── App.jsx        # URL inputs, ingestion pipeline, SSE parser, state
+        ├── index.css      # Full design system (dark theme, glassmorphism)
+        └── components/
+            ├── VideoCard.jsx  # Metric cards + manual edit drawer
+            └── ChatPanel.jsx  # Streaming RAG chat with citations + presets
 ```
 
 ---
@@ -78,10 +113,10 @@ creatorjoy/
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| `GET` | `/api/health` | Health check — returns API status |
-| `POST` | `/api/process-videos` | Accepts two URLs, scrapes metadata, transcribes audio, chunks + embeds into ChromaDB |
-| `POST` | `/api/update-video-data` | Accepts manually edited metadata/transcript, re-indexes ChromaDB chunks |
-| `POST` | `/api/chat` | RAG query — retrieves relevant chunks, streams Llama 3 response via SSE with citations |
+| `GET` | `/api/health` | Health check |
+| `POST` | `/api/process-videos` | Scrape, transcribe, chunk + embed two videos |
+| `POST` | `/api/update-video-data` | Re-index manually edited metadata/transcript |
+| `POST` | `/api/chat` | RAG query — streams Llama 3 response via SSE with citations |
 
 ---
 
@@ -89,115 +124,122 @@ creatorjoy/
 
 | Layer | Technology | Why |
 |-------|-----------|-----|
-| **Frontend** | React + Vite | Real-time SSE dashboard, no SSR overhead needed |
-| **Backend** | FastAPI (Python) | Async-native, auto-generated docs, perfect for streaming |
-| **Orchestration** | LangChain | Mandatory per spec — handles message formatting, streaming, and chain logic |
-| **LLM** | Llama 3 70B (Groq) | Fastest inference available, free tier, no cold starts |
-| **Transcription** | Whisper large-v3 (Groq) | Free, accurate, handles Hindi/English code-switching well |
-| **Embeddings** | HuggingFace `all-MiniLM-L6-v2` | Runs 100% locally, zero API cost, ~90MB download |
-| **Vector DB** | ChromaDB (local persistence) | Zero setup, perfect for MVP, swappable to pgvector at scale |
-| **Scraping** | `yt-dlp` + `youtube-transcript-api` | Official subtitle API for YouTube, yt-dlp fallback for Instagram |
+| **Frontend** | React + Vite | SSE streaming dashboard, no SSR overhead |
+| **Backend** | FastAPI (Python) | Async-native, perfect for streaming |
+| **Orchestration** | LangChain | Handles message formatting, streaming, chain logic |
+| **LLM** | Llama 3.3 70B (Groq) | Fastest inference, free tier, no cold starts |
+| **Transcription** | Whisper large-v3 (Groq) | Free, multilingual, handles code-switching |
+| **Embeddings** | FastEmbed `BAAI/bge-small-en-v1.5` | 100% local, ONNX, <100MB RAM, zero cost |
+| **Vector DB** | ChromaDB (local) | Zero setup, swappable to pgvector at scale |
+| **YT Scraping** | `yt-dlp` + `youtube-transcript-api` + Invidious | Three-layer fallback for reliability |
+| **IG Scraping** | `instaloader` + `yt-dlp` | instaloader for metadata, yt-dlp for audio |
 
 ---
 
 ## 🚀 How to Run Locally
 
 ### Prerequisites
-- Node.js (v18+)
 - Python 3.10+
-- FFmpeg (Must be installed and on your system PATH for `yt-dlp` audio extraction)
+- Node.js v18+
+- FFmpeg (on system PATH — required for audio extraction)
+- A free Groq API key from [console.groq.com/keys](https://console.groq.com/keys)
 
-### 0. Github
+### 1. Clone & Configure
+
 ```bash
 git clone https://github.com/Kushalsheth7/videoAnalytics.git
+cd videoAnalytics
 ```
 
-### 1. Environment Setup
-Create a `.env` file in the root directory based on the `.env.example`:
-```env
-GROQ_API_KEY="gsk_your_groq_api_key_here"
+Copy the environment template and add your Groq key:
+```bash
+cp .env.example .env
+# Edit .env → set GROQ_API_KEY=gsk_your_key_here
 ```
-Get your free key at [console.groq.com/keys](https://console.groq.com/keys).
 
-### 2. Backend (FastAPI + LangChain)
-Open a terminal and navigate to the backend folder:
+### 2. Backend
+
 ```bash
 cd backend
 python -m venv venv
-source venv/bin/activate  # On Windows use: venv\Scripts\activate
+
+# Windows
+venv\Scripts\activate
+
+# macOS/Linux
+source venv/bin/activate
+
 pip install -r requirements.txt
 python main.py
 ```
-*The API will run at http://127.0.0.1:8000*
 
-### 3. Frontend (React + Vite)
-Open a new terminal and navigate to the frontend folder:
+API runs at **http://127.0.0.1:8000** — verify with `/api/health`.
+
+### 3. Frontend
+
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-*The app will run at http://localhost:5173*
+
+App runs at **http://localhost:5173**
 
 ---
 
-## 🏗️ System Architecture Flow
+## 🏗️ Data Flow
 
 ```
-User pastes 2 URLs (YouTube + Instagram)
-         │
-         ▼
-┌─────────────────────────────────┐
-│  POST /api/process-videos       │
-│                                 │
-│  1. yt-dlp extracts metadata    │
-│     (title, likes, views, etc.) │
-│                                 │
-│  2. Transcript retrieval:       │
-│     YouTube → youtube-transcript│
-│     Instagram → Whisper (Groq)  │
-│                                 │
-│  3. RecursiveCharacterText      │
-│     Splitter (500 chars)        │
-│                                 │
-│  4. HuggingFace MiniLM embeds   │
-│     each chunk → ChromaDB       │
-│     (tagged with video_id)      │
-└─────────────────────────────────┘
-         │
-         ▼
-┌─────────────────────────────────┐
-│  POST /api/chat (SSE stream)    │
-│                                 │
-│  1. Query embedded → similarity │
-│     search on ChromaDB (top 5)  │
-│                                 │
-│  2. Retrieved chunks injected   │
-│     into Llama 3 context window │
-│     with system prompt          │
-│                                 │
-│  3. Tokens streamed via SSE     │
-│     with citation metadata      │
-│     (video_id + chunk_index)    │
-└─────────────────────────────────┘
-         │
-         ▼
-   React UI renders streaming
-   markdown + citation tags
+User pastes YouTube URL + Instagram Reel URL
+              │
+              ▼
+    POST /api/process-videos
+              │
+    ┌─────────┴──────────┐
+    │ YouTube            │ Instagram
+    │                    │
+    │ 1. youtube-        │ 1. instaloader →
+    │    transcript-api  │    views, likes,
+    │    (captions)      │    comments, followers
+    │                    │
+    │ 2. yt-dlp fallback │ 2. yt-dlp → audio
+    │    (android_vr)    │    → Groq Whisper
+    │                    │    → transcript
+    │ 3. Invidious API   │
+    │    fallback        │
+    └─────────┬──────────┘
+              │
+    RecursiveCharacterTextSplitter
+    (500 chars, 50 overlap)
+              │
+    FastEmbed ONNX → ChromaDB
+    (tagged: video_id A or B)
+              │
+              ▼
+    POST /api/chat (SSE)
+              │
+    Similarity search (top 5 chunks)
+              │
+    Llama 3.3 70B via Groq
+    System prompt + video metadata + retrieved chunks
+              │
+    Streamed tokens + citation metadata
+              │
+              ▼
+    React ChatPanel renders markdown + citations
 ```
 
 ---
 
-## 💰 Cost Analysis: Scaling to 1,000 Creators/Day
+## 💰 Cost Analysis: 1,000 Creators/Day
 
-| Resource | Cost per creator | At 1,000/day |
-|----------|-----------------|-------------|
-| Groq Llama 3 (LLM) | $0.00 (free tier) | $0.00* |
-| Groq Whisper (transcription) | $0.00 (free tier) | $0.00* |
-| HuggingFace embeddings | $0.00 (local) | $0.00 |
-| ChromaDB | $0.00 (local) | $0.00 |
-| **Total** | **$0.00** | **$0.00** |
+| Resource | Cost |
+|----------|------|
+| Groq Llama 3.3 70B (LLM) | $0 (free tier) |
+| Groq Whisper (transcription) | $0 (free tier) |
+| FastEmbed embeddings | $0 (local ONNX) |
+| ChromaDB | $0 (local) |
+| instaloader | $0 (open source) |
+| **Total MVP cost** | **$0** |
 
-*\*Groq free tier has rate limits (~6000 RPM). At 1,000 creators/day, you'd hit these limits and need to upgrade to Groq's paid tier ($0.59/M input tokens for Llama 3 70B) — still 10-20x cheaper than GPT-4o. Alternatively, self-host Llama 3 on a single A100 GPU ($1.50/hr on Lambda) for unlimited throughput.*
-
-**The better alternative at true scale**: Self-hosted Llama 3 on vLLM + pgvector on managed Postgres (Supabase or Neon). This eliminates all third-party rate limits and keeps the per-creator cost under $0.002.
+**At true scale** (>6,000 RPM Groq limit): Self-host Llama 3.3 on vLLM + pgvector on Supabase. Per-creator cost drops to under $0.002. Still 20× cheaper than GPT-4o.

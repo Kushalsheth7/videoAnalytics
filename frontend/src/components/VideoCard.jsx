@@ -97,7 +97,7 @@ export default function VideoCard({ video, videoId, onSave }) {
           <span className="creator-name">@{video.creator}</span>
           <span className="follower-count">
             {formatViews(video.follower_count)} followers
-            {video.platform === 'Instagram' && <span style={{ fontSize: '0.7em', color: 'var(--text-muted)', marginLeft: '0.25rem', fontWeight: 400, cursor: 'help' }} title="Estimated using formula: max(4500, Likes × 8)">(est.)</span>}
+            {video.platform === 'Instagram' && <span style={{ fontSize: '0.7em', color: 'var(--text-muted)', marginLeft: '0.25rem', fontWeight: 400, cursor: 'help' }} title="Estimated using formula: max(4500, Likes × 8)"></span>}
           </span>
         </div>
       </div>
@@ -108,7 +108,7 @@ export default function VideoCard({ video, videoId, onSave }) {
           <span className="metric-label">Views</span>
           <span className="metric-value">
             {formatViews(video.views)}
-            {video.platform === 'Instagram' && <span style={{ fontSize: '0.65em', color: 'var(--text-muted)', marginLeft: '0.25rem', fontWeight: 400, cursor: 'help' }} title="Estimated using formula: max(12500, Likes × 15)">(est.)</span>}
+            {video.platform === 'Instagram' && <span style={{ fontSize: '0.65em', color: 'var(--text-muted)', marginLeft: '0.25rem', fontWeight: 400, cursor: 'help' }} title="Estimated using formula: max(12500, Likes × 15)"></span>}
           </span>
         </div>
         <div className="metric-box">

@@ -10,6 +10,7 @@ groq
 chromadb
 yt-dlp
 youtube-transcript-api
+instaloader
 # sentence-transformers
 # langchain-huggingface
 fastembed

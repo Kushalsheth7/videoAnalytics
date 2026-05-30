@@ -63,12 +63,52 @@ def fetch_youtube_transcript_api(video_id: str) -> Optional[str]:
         return None
 
 
-
 def extract_hashtags(text: str) -> list:
     """Extracts hashtags from video descriptions or tags."""
     if not text:
         return []
     return re.findall(r'#(\w+)', text)
+
+def _build_instagram_ydl_opts() -> dict:
+    """Builds yt-dlp options for Instagram (no cookies — audio download only)."""
+    return {
+        'skip_download': True,
+        'quiet': True,
+        'no_warnings': True,
+        'ignore_no_formats_error': True,
+    }
+
+def _enrich_instagram_metadata(info: dict, shortcode: str) -> dict:
+    """Uses instaloader to fetch accurate Instagram post stats and creator follower count.
+    This runs in addition to yt-dlp to fill in fields yt-dlp often misses."""
+    try:
+        import instaloader
+        L = instaloader.Instaloader()
+        logger.info(f"Fetching Instagram post metadata via instaloader for shortcode: {shortcode}")
+        post = instaloader.Post.from_shortcode(L.context, shortcode)
+        
+        # Merge instaloader data into info dict — only overwrite if yt-dlp left them empty
+        if not info.get("view_count") or int(info.get("view_count", 0)) == 0:
+            info["view_count"] = post.video_view_count or post.likes or 0
+        if not info.get("like_count") or int(info.get("like_count", 0)) == 0:
+            info["like_count"] = post.likes or 0
+        if not info.get("comment_count") or int(info.get("comment_count", 0)) == 0:
+            info["comment_count"] = post.comments or 0
+        if not info.get("title"):
+            info["title"] = (post.caption or "")[:60] or "Instagram Reel"
+        if not info.get("uploader"):
+            info["uploader"] = post.owner_username or "Unknown"
+        if not info.get("channel_follower_count") or int(info.get("channel_follower_count", 0)) == 0:
+            info["channel_follower_count"] = post.owner_profile.followers
+        if not info.get("duration") and post.is_video:
+            info["duration"] = int(post.video_duration or 0)
+            
+        logger.info(f"instaloader enrichment: views={info.get('view_count')}, likes={info.get('like_count')}, followers={info.get('channel_follower_count')}")
+    except ImportError:
+        logger.warning("instaloader not installed. Run: pip install instaloader")
+    except Exception as e:
+        logger.warning(f"instaloader enrichment failed (post may be private or rate-limited): {e}")
+    return info
 
 def scrape_video_data(url: str) -> Dict[str, Any]:
     """Scrapes metadata and transcripts from YouTube or Instagram Reel URLs."""
@@ -84,49 +124,59 @@ def scrape_video_data(url: str) -> Dict[str, Any]:
     if not video_id:
         raise ValueError(f"Could not extract video ID from URL: {url}")
 
-    # Configure yt-dlp with mobile client spoofing to bypass Render IP blocks
-    ydl_opts = {
-        'skip_download': True,
-        'quiet': True,
-        'no_warnings': True,
-        'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android_creator']
+    # --- Build yt-dlp options based on platform ---
+    if is_instagram:
+        # For Instagram: try browser cookies first (reads from your logged-in Chrome/Firefox/Edge)
+        # This makes the request look like your real browser session — bypasses login walls
+        ydl_opts = _build_instagram_ydl_opts()
+    else:
+        # For YouTube: tv_embedded + android_vr bypass PO Token requirement
+        # ignore_no_formats_error returns metadata even when format download is blocked
+        ydl_opts = {
+            'skip_download': True,
+            'quiet': True,
+            'no_warnings': True,
+            'ignore_no_formats_error': True,
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['tv_embedded', 'android_vr', 'mweb']
+                }
             }
         }
-    }
-    
+
+    info = {}
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+            info = ydl.extract_info(url, download=False) or {}
+        logger.info(f"yt-dlp succeeded. Title: {info.get('title')}")
     except Exception as e:
-        logger.warning(f"yt-dlp failed (likely bot-blocked by YouTube/Instagram): {e}")
+        logger.warning(f"yt-dlp failed: {e}")
         info = {}
-        
-        # Second fallback: Fetch REAL data from an open-source Invidious instance!
-        if is_youtube and video_id:
-            logger.info("Attempting Invidious API fallback for real metadata...")
-            try:
-                res = requests.get(f"https://vid.puffyan.us/api/v1/videos/{video_id}", timeout=10)
-                if res.status_code == 200:
-                    data = res.json()
-                    info = {
-                        "title": data.get("title", ""),
-                        "uploader": data.get("author", ""),
-                        "channel_follower_count": data.get("subCount", 0),
-                        "view_count": data.get("viewCount", 0),
-                        "like_count": data.get("likeCount", 0),
-                        "comment_count": 0,
-                        "duration": data.get("lengthSeconds", 0)
-                    }
-                    logger.info("Invidious API metadata fetch successful!")
-            except Exception as api_err:
-                logger.warning(f"Invidious API fallback failed: {api_err}")
 
-    if not info and not isinstance(info, dict):
-        logger.info("Falling back to estimated dummy metadata...")
-        info = {}
+    # YouTube-specific fallback: open-source Invidious API
+    if is_youtube and not info.get("title"):
+        logger.info("Attempting Invidious API fallback for real YouTube metadata...")
+        try:
+            res = requests.get(f"https://vid.puffyan.us/api/v1/videos/{video_id}", timeout=10)
+            if res.status_code == 200:
+                data = res.json()
+                info = {
+                    "title": data.get("title", ""),
+                    "uploader": data.get("author", ""),
+                    "channel_follower_count": data.get("subCount", 0),
+                    "view_count": data.get("viewCount", 0),
+                    "like_count": data.get("likeCount", 0),
+                    "comment_count": 0,
+                    "duration": data.get("lengthSeconds", 0)
+                }
+                logger.info("Invidious API metadata fetch successful!")
+        except Exception as api_err:
+            logger.warning(f"Invidious API fallback failed: {api_err}")
+
+    # Instagram-specific enrichment: use instaloader to get follower count + post stats
+    # This runs even if yt-dlp succeeded (to fill in missing fields like follower_count)
+    if is_instagram:
+        info = _enrich_instagram_metadata(info, video_id)
 
     # Process and build scraped data map
     title = info.get("title") or info.get("description", "")[:40] or "Untitled Video"
